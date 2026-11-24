@@ -1,0 +1,192 @@
+--- a/.env.example
++++ b/.env.example
+@@ -1,5 +1,9 @@
+ # Backend API base URL (no trailing slash, no /api/v1 suffix - paths are defined in src/services/endpoints.js)
+-VITE_API_BASE_URL=http://localhost:8000
++VITE_API_BASE_URL=http://127.0.0.1:8000
++
++# Maximum upload size in MB for Knowledge Base documents (optional, default 10).
++# The backend does not expose its limit, so keep this equal to the backend's MAX_UPLOAD_MB.
++VITE_MAX_UPLOAD_MB=10
+ 
+ # Firebase web app config (Firebase Console > Project settings > Your apps > Web app)
+ VITE_FIREBASE_API_KEY=your-api-key
+--- a/src/App.jsx
++++ b/src/App.jsx
+@@ -8,6 +8,7 @@
+ import DashboardPage from './pages/DashboardPage';
+ import CreateBusinessPage from './pages/CreateBusinessPage';
+ import BusinessDetailsPage from './pages/BusinessDetailsPage';
++import KnowledgeBasePage from './pages/KnowledgeBasePage';
+ import TeamPage from './pages/TeamPage';
+ import InvitationsPage from './pages/InvitationsPage';
+ import ProfilePage from './pages/ProfilePage';
+@@ -28,6 +29,7 @@
+           <Route path="/" element={<DashboardPage />} />
+           <Route path="/businesses/new" element={<CreateBusinessPage />} />
+           <Route path="/businesses/:id" element={<BusinessDetailsPage />} />
++          <Route path="/knowledge" element={<KnowledgeBasePage />} />
+           <Route path="/team" element={<TeamPage />} />
+           <Route path="/invitations" element={<InvitationsPage />} />
+           <Route path="/profile" element={<ProfilePage />} />
+--- a/src/api.js
++++ b/src/api.js
+@@ -9,9 +9,12 @@
+  * - On a 401 the request is retried once with a force-refreshed token;
+  *   if it still fails the user is signed out.
+  */
++// NOTE: no default Content-Type header on purpose. Axios sets application/json
++// by itself for plain-object bodies, and for FormData uploads the browser must
++// generate `multipart/form-data; boundary=...`. A forced JSON default would
++// make axios serialize the FormData as JSON and break document uploads.
+ const api = axios.create({
+   baseURL: import.meta.env.VITE_API_BASE_URL,
+-  headers: { 'Content-Type': 'application/json' },
+   timeout: 20000,
+ });
+ 
+--- a/src/components/Sidebar.jsx
++++ b/src/components/Sidebar.jsx
+@@ -9,6 +9,7 @@
+   mail: 'M21.75 6.75v10.5a2.25 2.25 0 01-2.25 2.25h-15a2.25 2.25 0 01-2.25-2.25V6.75m19.5 0A2.25 2.25 0 0019.5 4.5h-15a2.25 2.25 0 00-2.25 2.25m19.5 0v.243a2.25 2.25 0 01-1.07 1.916l-7.5 4.615a2.25 2.25 0 01-2.36 0L3.32 8.91a2.25 2.25 0 01-1.07-1.916V6.75',
+   user: 'M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z',
+   plus: 'M12 4.5v15m7.5-7.5h-15',
++  book: 'M12 6.042A8.967 8.967 0 006 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 016 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 016-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0018 18a8.967 8.967 0 00-6 2.292m0-14.25v14.25',
+ };
+ 
+ export default function Sidebar({ open, onClose }) {
+@@ -17,6 +18,7 @@
+   // UX only: hides links the role can't use. The backend enforces access.
+   const items = [
+     { to: '/', label: 'Dashboard', icon: ICONS.dashboard },
++    { to: '/knowledge', label: 'Knowledge Base', icon: ICONS.book },
+     permissions.viewTeam && { to: '/team', label: 'Team', icon: ICONS.team },
+     { to: '/invitations', label: 'Invitations', icon: ICONS.mail, badge: pendingInvitationCount },
+     { to: '/profile', label: 'Profile', icon: ICONS.user },
+--- a/src/services/endpoints.js
++++ b/src/services/endpoints.js
+@@ -28,6 +28,19 @@
+   businessInvitations: (businessId) =>
+     `${API_PREFIX}/businesses/${enc(businessId)}/invitations`, // GET, POST
+ 
++  // Knowledge Base (Phase 3, final backend contract). The business is identified
++  // ONLY by the id in the URL; the server derives user and role from the token.
++  documents: (businessId) => `${API_PREFIX}/businesses/${enc(businessId)}/documents`, // GET, POST (multipart)
++  document: (businessId, documentId) =>
++    `${API_PREFIX}/businesses/${enc(businessId)}/documents/${enc(documentId)}`, // GET, DELETE
++  downloadDocument: (businessId, documentId) =>
++    `${API_PREFIX}/businesses/${enc(businessId)}/documents/${enc(documentId)}/download`, // GET (binary)
++  retryDocument: (businessId, documentId) =>
++    `${API_PREFIX}/businesses/${enc(businessId)}/documents/${enc(documentId)}/retry`, // POST
++  knowledge: (businessId) => `${API_PREFIX}/businesses/${enc(businessId)}/knowledge`, // GET, POST
++  knowledgeEntry: (businessId, entryId) =>
++    `${API_PREFIX}/businesses/${enc(businessId)}/knowledge/${enc(entryId)}`, // PATCH, DELETE
++
+   // Invitations addressed to the signed-in user
+   myInvitations: `${API_PREFIX}/invitations`, // GET
+   acceptInvitation: (id) => `${API_PREFIX}/invitations/${enc(id)}/accept`, // POST
+--- a/src/utils/errors.js
++++ b/src/utils/errors.js
+@@ -18,23 +18,45 @@
+   404: 'The requested item was not found.',
+   409: 'This conflicts with existing data (for example, the user may already be a member or invited).',
+   410: 'This invitation has expired or is no longer valid.',
++  413: 'The file is too large.',
++  415: 'This file type is not supported.',
+   422: 'Some of the submitted information is invalid.',
++  500: 'An unexpected server error occurred. Please try again.',
++  502: 'Storage is temporarily unavailable. Please try again.',
++  503: 'The service is temporarily unavailable. Please try again later.',
+ };
+ 
+ export function getStatus(error) {
+   return error?.response?.status || null;
+ }
+ 
+-function validationMessage(detail) {
+-  // FastAPI 422: detail is an array of { loc: [...], msg: '...' }
+-  const first = detail[0];
++/**
++ * Backend error body shape (Phase 3 contract):
++ *   { "error": { "code": "file_too_large", "message": "...", "details": [...] } }
++ * Returns the machine-readable `code`, or null.
++ */
++export function getErrorCode(error) {
++  const data = error?.response?.data;
++  const err = data && typeof data === 'object' ? data.error : null;
++  return err && typeof err === 'object' && typeof err.code === 'string' ? err.code : null;
++}
++
++/** True when a request was cancelled with AbortController (not a real failure). */
++export function isCanceled(error) {
++  return error?.code === 'ERR_CANCELED' || error?.name === 'CanceledError' || error?.name === 'AbortError';
++}
++
++function describeDetail(first) {
+   if (!first?.msg) return '';
+-  const field = Array.isArray(first.loc) ? first.loc.filter((p) => p !== 'body').join('.') : '';
+-  return field ? `${field}: ${first.msg}` : first.msg;
++  const loc = Array.isArray(first.loc)
++    ? first.loc.filter((p) => p !== 'body' && p !== 'query').join('.')
++    : '';
++  return loc ? `${loc}: ${first.msg}` : first.msg;
+ }
+ 
+ /**
+  * Convert any thrown error (Firebase, Axios, or plain) into a user-facing string.
++ * Never returns raw HTML or stack traces.
+  */
+ export function getErrorMessage(error, fallback = 'Something went wrong. Please try again.') {
+   if (!error) return fallback;
+@@ -43,17 +65,26 @@
+     return FIREBASE_MESSAGES[error.code];
+   }
+ 
+-  // Axios error with a backend response
+   const data = error.response?.data;
+-  if (data) {
+-    if (typeof data === 'string' && data.length < 300) return data;
++  if (data && typeof data === 'object') {
++    // Phase 3 shape: { error: { code, message, details } }
++    if (data.error && typeof data.error === 'object') {
++      const { message, details } = data.error;
++      if (typeof message === 'string' && message) {
++        const extra = Array.isArray(details) ? describeDetail(details[0]) : '';
++        return extra && !message.includes(extra) ? `${message} (${extra})` : message;
++      }
++    }
++    // Earlier shapes (FastAPI default etc.)
+     if (typeof data.detail === 'string') return data.detail;
+     if (Array.isArray(data.detail)) {
+-      const msg = validationMessage(data.detail);
++      const msg = describeDetail(data.detail[0]);
+       if (msg) return msg;
+     }
+     if (typeof data.message === 'string') return data.message;
+     if (typeof data.error === 'string') return data.error;
++  } else if (typeof data === 'string' && data.length < 300 && !data.trim().startsWith('<')) {
++    return data;
+   }
+ 
+   const status = getStatus(error);
+@@ -62,6 +93,9 @@
+   if (error.code === 'ERR_NETWORK') {
+     return 'Cannot reach the server. Check your connection or try again later.';
+   }
++  if (error.code === 'ECONNABORTED') {
++    return 'The request timed out. Please try again.';
++  }
+ 
+   if (error.message) return error.message;
+   return fallback;
+--- a/src/utils/permissions.js
++++ b/src/utils/permissions.js
+@@ -81,6 +81,8 @@
+     changeRoles: full,
+     editBusiness: manage,
+     archiveBusiness: full,
++    // Knowledge Base: everyone can view; only owner/admin can upload, delete and edit.
++    manageKnowledge: manage,
+   };
+ }
+ 

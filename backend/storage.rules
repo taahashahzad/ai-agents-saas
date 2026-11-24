@@ -1,0 +1,11 @@
+rules_version = '2';
+
+// All file access goes through the FastAPI backend (Admin SDK, which bypasses these rules).
+// Browsers/mobile clients get NO direct access to any object in the bucket.
+service firebase.storage {
+  match /b/{bucket}/o {
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}
