@@ -8,7 +8,7 @@ import Notice from '../Notice';
 import { CardGridSkeleton } from '../Skeleton';
 import EntryFormModal from './EntryFormModal';
 import EntryViewModal from './EntryViewModal';
-import { deleteEntry, listEntries } from '../../services/knowledgeService';
+import { deleteEntry, indexEntry, listEntries } from '../../services/knowledgeService';
 import { formatDate } from '../../utils/constants';
 import { getErrorMessage, getStatus, isCanceled } from '../../utils/errors';
 
@@ -31,6 +31,7 @@ export default function BusinessInfoTab({ businessId, businessName, businessType
   const [deleting, setDeleting] = useState(false);
   const [notice, setNotice] = useState('');
   const [actionError, setActionError] = useState('');
+  const [indexingId, setIndexingId] = useState(null);
 
   const abortRef = useRef(null);
   const requestRef = useRef(0);
@@ -132,6 +133,25 @@ export default function BusinessInfoTab({ businessId, businessName, businessType
     }
   };
 
+  const handleIndex = async (entry) => {
+    setIndexingId(entry.entry_id);
+    setActionError('');
+    try {
+      const updated = await indexEntry(businessId, entry.entry_id);
+      setEntries((previous) => previous.map((item) => item.entry_id === updated.entry_id ? updated : item));
+      if (updated.indexing_status === 'indexed') {
+        setNotice(`"${updated.title}" was indexed successfully.`);
+      } else {
+        setActionError(updated.indexing_error || 'Indexing failed.');
+      }
+    } catch (err) {
+      setActionError(getErrorMessage(err, 'Failed to index this entry.'));
+      await fetchFirstPage({ silent: true });
+    } finally {
+      setIndexingId(null);
+    }
+  };
+
   const addButton = canWrite ? <Button onClick={() => setFormState({})}>Add information</Button> : undefined;
 
   return (
@@ -203,6 +223,15 @@ export default function BusinessInfoTab({ businessId, businessName, businessType
                 <p className="mt-2 line-clamp-4 flex-1 whitespace-pre-line break-words text-sm text-slate-500">
                   {entry.content}
                 </p>
+                <p
+                  className={`mt-2 text-xs ${
+                    entry.indexing_status === 'failed' ? 'text-red-600' : 'text-slate-500'
+                  }`}
+                  title={entry.indexing_error || undefined}
+                >
+                  Index: {entry.indexing_status || 'pending'}
+                  {entry.indexed_chunk_count > 0 ? ` · ${entry.indexed_chunk_count} chunks` : ''}
+                </p>
                 <div className="mt-4 flex items-center justify-between gap-2 border-t border-slate-100 pt-3">
                   <span className="text-xs text-slate-400">Updated {formatDate(entry.updated_at || entry.created_at)}</span>
                   <div className="flex items-center gap-1">
@@ -215,6 +244,16 @@ export default function BusinessInfoTab({ businessId, businessName, businessType
                     </button>
                     {canWrite && (
                       <>
+                        {entry.indexing_status !== 'indexed' && (
+                          <button
+                            type="button"
+                            onClick={() => handleIndex(entry)}
+                            disabled={Boolean(indexingId)}
+                            className="rounded px-2 py-1 text-xs font-medium text-indigo-600 hover:bg-indigo-50 disabled:opacity-50"
+                          >
+                            {indexingId === entry.entry_id ? 'Indexing…' : 'Index'}
+                          </button>
+                        )}
                         <button
                           type="button"
                           onClick={() => setFormState({ entry })}

@@ -1,0 +1,52 @@
+{
+  "business_name": "Juniper Table (fictional)",
+  "sources": [
+    {
+      "source_id": "hours",
+      "title": "Opening hours",
+      "content": "Juniper Table is open Monday through Friday from 9:00 AM to 8:00 PM. On Saturday and Sunday it is open from 10:00 AM to 6:00 PM. The kitchen closes 30 minutes before the restaurant."
+    },
+    {
+      "source_id": "menu",
+      "title": "Menu",
+      "content": "Juniper Table serves brunch until 2:00 PM. The garden bowl contains quinoa, roasted vegetables, and tahini dressing. The mushroom melt is made with sourdough, mushrooms, and Swiss cheese. The children's menu includes a grilled cheese with fruit."
+    },
+    {
+      "source_id": "dietary",
+      "title": "Dietary information",
+      "content": "The garden bowl can be made vegan by omitting the tahini dressing. The kitchen uses separate utensils for gluten-free orders but is not an allergen-free facility. The mushroom melt contains dairy and gluten. Guests should tell their server about allergies."
+    },
+    {
+      "source_id": "reservations",
+      "title": "Reservations",
+      "content": "Reservations are accepted for parties of six or more by phone. Smaller parties are seated in order of arrival. A reservation is held for 15 minutes after its scheduled time."
+    },
+    {
+      "source_id": "policies",
+      "title": "Policies",
+      "content": "Guests may bring a celebration cake with advance notice; a $12 cake service fee applies. The patio is dog-friendly. Takeout orders are available for pickup, but delivery is not offered."
+    }
+  ],
+  "questions": [
+    {"question": "When does Juniper Table open on a Wednesday?", "expected_source_id": "hours", "required_terms": ["9", "am"]},
+    {"question": "What time does the kitchen close on Saturday?", "expected_source_id": "hours", "required_terms": ["5", "30"]},
+    {"question": "How late is the restaurant open on Sunday?", "expected_source_id": "hours", "required_terms": ["6", "pm"]},
+    {"question": "What are the weekday closing hours?", "expected_source_id": "hours", "required_terms": ["8", "pm"]},
+    {"question": "What time does brunch end?", "expected_source_id": "menu", "required_terms": ["2", "pm"]},
+    {"question": "What is in the garden bowl?", "expected_source_id": "menu", "required_terms": ["quinoa", "vegetables"]},
+    {"question": "Which cheese is used in the mushroom melt?", "expected_source_id": "menu", "required_terms": ["swiss"]},
+    {"question": "What comes with the children's grilled cheese?", "expected_source_id": "menu", "required_terms": ["fruit"]},
+    {"question": "Can the garden bowl be vegan?", "expected_source_id": "dietary", "required_terms": ["vegan", "dressing"]},
+    {"question": "Is the kitchen completely allergen-free?", "expected_source_id": "dietary", "required_terms": ["not", "allergen"]},
+    {"question": "Does the mushroom melt contain gluten?", "expected_source_id": "dietary", "required_terms": ["gluten", "dairy"]},
+    {"question": "How should I notify staff about an allergy?", "expected_source_id": "dietary", "required_terms": ["server"]},
+    {"question": "How many people are needed to make a reservation?", "expected_source_id": "reservations", "required_terms": ["six"]},
+    {"question": "Are reservations available for a table of four?", "expected_source_id": "reservations", "required_terms": ["arrival"]},
+    {"question": "How long is a reservation held?", "expected_source_id": "reservations", "required_terms": ["15", "minutes"]},
+    {"question": "Can we bring a birthday cake?", "expected_source_id": "policies", "required_terms": ["notice", "12"]},
+    {"question": "Are dogs allowed on the patio?", "expected_source_id": "policies", "required_terms": ["dog", "patio"]},
+    {"question": "Can I get my order delivered?", "expected_source_id": "policies", "required_terms": ["delivery", "not"]},
+    {"question": "Can I order takeout for pickup?", "expected_source_id": "policies", "required_terms": ["pickup"]},
+    {"question": "When does the weekday kitchen stop serving?", "expected_source_id": "hours", "required_terms": ["30", "minutes"]}
+  ]
+}

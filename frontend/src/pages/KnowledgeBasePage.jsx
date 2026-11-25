@@ -3,6 +3,7 @@ import { useAuth } from '../hooks/useAuth';
 import { useBusiness } from '../hooks/useBusiness';
 import BusinessInfoTab from '../components/knowledge/BusinessInfoTab';
 import DocumentsTab from '../components/knowledge/DocumentsTab';
+import RagPlayground from '../components/knowledge/RagPlayground';
 import Button from '../components/Button';
 import EmptyState from '../components/EmptyState';
 import Notice from '../components/Notice';
@@ -13,13 +14,14 @@ import { isArchived } from '../utils/knowledge';
 const TABS = [
   { id: 'documents', label: 'Documents' },
   { id: 'info', label: 'Business Information' },
+  { id: 'playground', label: 'RAG Playground' },
 ];
 
 export default function KnowledgeBasePage() {
   const { user } = useAuth();
   const { activeBusiness, activeBusinessId, role, permissions, loading } = useBusiness();
   const [params, setParams] = useSearchParams();
-  const tab = params.get('tab') === 'info' ? 'info' : 'documents';
+  const tab = TABS.some((item) => item.id === params.get('tab')) ? params.get('tab') : 'documents';
 
   if (loading) return <Spinner label="Loading..." />;
 
@@ -101,6 +103,13 @@ export default function KnowledgeBasePage() {
           key={activeBusinessId}
           {...shared}
           businessType={activeBusiness.type || activeBusiness.business_type}
+        />
+      </div>
+      <div role="tabpanel" hidden={tab !== 'playground'}>
+        <RagPlayground
+          key={activeBusinessId}
+          businessId={activeBusinessId}
+          businessName={activeBusiness.name}
         />
       </div>
     </div>

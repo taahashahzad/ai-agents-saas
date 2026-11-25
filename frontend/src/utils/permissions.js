@@ -83,6 +83,7 @@ export function getPermissions(role) {
     archiveBusiness: full,
     // Knowledge Base: everyone can view; only owner/admin can upload, delete and edit.
     manageKnowledge: manage,
+    manageAgents: manage,
   };
 }
 

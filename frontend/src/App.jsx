@@ -13,6 +13,7 @@ import TeamPage from './pages/TeamPage';
 import InvitationsPage from './pages/InvitationsPage';
 import ProfilePage from './pages/ProfilePage';
 import NotFoundPage from './pages/NotFoundPage';
+import AgentManagementPage from './pages/AgentManagementPage';
 
 export default function App() {
   return (
@@ -30,6 +31,7 @@ export default function App() {
           <Route path="/businesses/new" element={<CreateBusinessPage />} />
           <Route path="/businesses/:id" element={<BusinessDetailsPage />} />
           <Route path="/knowledge" element={<KnowledgeBasePage />} />
+          <Route path="/agents" element={<AgentManagementPage />} />
           <Route path="/team" element={<TeamPage />} />
           <Route path="/invitations" element={<InvitationsPage />} />
           <Route path="/profile" element={<ProfilePage />} />

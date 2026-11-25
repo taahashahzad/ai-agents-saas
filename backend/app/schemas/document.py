@@ -18,6 +18,13 @@ class DocumentStatus(str, Enum):
     failed = "failed"
 
 
+class IndexingStatus(str, Enum):
+    pending = "pending"
+    processing = "processing"
+    indexed = "indexed"
+    failed = "failed"
+
+
 class DocumentOut(BaseModel):
     """Public view of a document. Storage paths are deliberately NOT included."""
     document_id: str
@@ -30,6 +37,11 @@ class DocumentOut(BaseModel):
     status: DocumentStatus
     processing_error: str | None = None
     extracted_character_count: int | None = None
+    indexing_status: IndexingStatus = IndexingStatus.pending
+    indexed_chunk_count: int = 0
+    indexed_at: datetime | None = None
+    indexing_error: str | None = None
+    embedding_model: str | None = None
     uploaded_by: str
     uploaded_at: datetime
     updated_at: datetime

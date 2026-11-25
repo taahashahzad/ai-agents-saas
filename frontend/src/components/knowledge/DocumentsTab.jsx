@@ -14,6 +14,7 @@ import {
   downloadDocument,
   listDocuments,
   retryDocument,
+  indexDocument,
   uploadDocument,
 } from '../../services/documentService';
 import { ACCEPT_ATTR, documentName, validateFile } from '../../utils/knowledge';
@@ -39,7 +40,7 @@ export default function DocumentsTab({ businessId, businessName, canWrite, readO
   const [details, setDetails] = useState(null);
   const [toDelete, setToDelete] = useState(null);
   const [deleting, setDeleting] = useState(false);
-  const [busy, setBusy] = useState(null); // { id, kind: 'download' | 'retry' }
+  const [busy, setBusy] = useState(null); // { id, kind: 'download' | 'retry' | 'index' }
 
   const inputRef = useRef(null);
   const uploadingRef = useRef(false); // synchronous guard against duplicate submissions
@@ -128,7 +129,8 @@ export default function DocumentsTab({ businessId, businessName, canWrite, readO
       setUploads((prev) => prev.map((u) => (u.id === id ? { ...u, ...changes } : u)));
 
     let ok = 0;
-    let warned = 0;
+    let processingFailed = 0;
+    let indexingFailed = 0;
     let stopReason = '';
 
     for (const item of items) {
@@ -144,12 +146,16 @@ export default function DocumentsTab({ businessId, businessName, canWrite, readO
           signal: controller.signal,
           onProgress: (p) => patch(item.id, { progress: p }),
         });
-        if (doc?.status === 'failed') {
-          warned += 1;
+        if (doc?.status === 'failed' || doc?.indexing_status === 'failed') {
+          if (doc?.status === 'failed') processingFailed += 1;
+          else indexingFailed += 1;
           patch(item.id, {
             status: 'warning',
             progress: 100,
-            message: doc.processing_error || 'The file was saved, but its text could not be read.',
+            message:
+              doc.status === 'failed'
+                ? doc.processing_error || 'The file was saved, but its text could not be extracted.'
+                : doc.indexing_error || 'The file was saved and extracted, but indexing failed.',
           });
         } else {
           ok += 1;
@@ -170,11 +176,19 @@ export default function DocumentsTab({ businessId, businessName, canWrite, readO
     if (controller.signal.aborted) return; // user left this business; nothing to update
 
     setUploading(false);
-    if (ok + warned > 0) {
+    if (ok + processingFailed + indexingFailed > 0) {
       const parts = [];
-      if (ok) parts.push(`${ok} document${ok > 1 ? 's' : ''} uploaded and processed`);
-      if (warned) parts.push(`${warned} uploaded but could not be processed (see Retry in the list)`);
-      setNotice({ type: warned ? 'warning' : 'success', text: `${parts.join('; ')}.` });
+      if (ok) parts.push(`${ok} document${ok > 1 ? 's' : ''} uploaded and text extracted`);
+      if (processingFailed) {
+        parts.push(`${processingFailed} uploaded but text extraction failed; use Retry in the list`);
+      }
+      if (indexingFailed) {
+        parts.push(`${indexingFailed} uploaded and extracted, but indexing failed; use Index document in the list`);
+      }
+      setNotice({
+        type: processingFailed || indexingFailed ? 'warning' : 'success',
+        text: `${parts.join('; ')}.`,
+      });
     }
     await fetchFirstPage({ silent: true });
   };
@@ -214,6 +228,26 @@ export default function DocumentsTab({ businessId, businessName, canWrite, readO
       if (code === 'already_processed' || code === 'already_processing' || getStatus(err) === 404) {
         await fetchFirstPage({ silent: true }); // our copy was out of date
       }
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const handleIndex = async (doc) => {
+    setBusy({ id: doc.document_id, kind: 'index' });
+    setActionError('');
+    setNotice(null);
+    try {
+      const updated = await indexDocument(businessId, doc.document_id);
+      setDocs((prev) => prev.map((d) => (d.document_id === updated.document_id ? updated : d)));
+      if (updated.indexing_status === 'indexed') {
+        setNotice({ type: 'success', text: `"${documentName(updated)}" was indexed successfully.` });
+      } else {
+        setActionError(updated.indexing_error || 'Document indexing failed.');
+      }
+    } catch (err) {
+      setActionError(getErrorMessage(err, 'Failed to index the document.'));
+      await fetchFirstPage({ silent: true });
     } finally {
       setBusy(null);
     }
@@ -317,6 +351,7 @@ export default function DocumentsTab({ businessId, businessName, canWrite, readO
             onView={setDetails}
             onDownload={handleDownload}
             onRetry={handleRetry}
+            onIndex={handleIndex}
             onDelete={setToDelete}
           />
           {nextCursor && (

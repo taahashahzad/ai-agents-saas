@@ -4,16 +4,20 @@ from fastapi import APIRouter, Depends, File, Query, Response, UploadFile
 from google.cloud.firestore import Client
 
 from app.core.config import Settings
+from app.core.errors import ServiceUnavailableError
 from app.core.permissions import Permission
 from app.core.storage import R2Storage
 from app.dependencies.business import require_permission
 from app.dependencies.db import get_db
+from app.dependencies.rag import get_optional_rag_service, get_rag_service
 from app.dependencies.settings import get_app_settings
 from app.dependencies.storage import get_storage
 from app.schemas.document import DocumentListOut, DocumentOut, DocumentType
 from app.services import document_service
 from app.services.file_validation import CANONICAL_MIME
 from app.services.membership_service import BusinessContext
+from app.services.rag_indexing import document_index_status, index_document
+from app.services.rag_service import RagService
 
 router = APIRouter(prefix="/businesses/{business_id}/documents", tags=["documents"])
 
@@ -30,17 +34,44 @@ def list_documents(limit: int | None = Query(None, ge=1, le=100), cursor: str | 
 @router.post("", response_model=DocumentOut, status_code=201)
 def upload_document(file: UploadFile = File(...), ctx: BusinessContext = Depends(_MANAGE),
                     db: Client = Depends(get_db), storage: R2Storage = Depends(get_storage),
-                    settings: Settings = Depends(get_app_settings)):
+                    settings: Settings = Depends(get_app_settings),
+                    rag: RagService | None = Depends(get_optional_rag_service)):
     """multipart/form-data with ONE field named `file`. Processing runs synchronously, so the
     response already shows the final status (`processed` or `failed`)."""
-    return document_service.upload_document(
+    document = document_service.upload_document(
         db, storage, ctx, filename=file.filename, content_type=file.content_type,
         stream=file.file, max_bytes=settings.max_upload_bytes)
+    if rag and document.status.value == "processed":
+        try:
+            return index_document(db, storage, ctx, document.document_id, rag)
+        except ServiceUnavailableError:
+            return document_index_status(db, ctx, document.document_id)
+    return document
 
 
 @router.get("/{document_id}", response_model=DocumentOut)
 def get_document(document_id: str, ctx: BusinessContext = Depends(_VIEW), db: Client = Depends(get_db)):
     return document_service.get_document(db, ctx, document_id)
+
+
+@router.post("/{document_id}/index", response_model=DocumentOut)
+def index_business_document(document_id: str, ctx: BusinessContext = Depends(_MANAGE),
+                            db: Client = Depends(get_db), storage: R2Storage = Depends(get_storage),
+                            rag: RagService = Depends(get_rag_service)):
+    return index_document(db, storage, ctx, document_id, rag)
+
+
+@router.post("/{document_id}/reindex", response_model=DocumentOut)
+def reindex_business_document(document_id: str, ctx: BusinessContext = Depends(_MANAGE),
+                              db: Client = Depends(get_db), storage: R2Storage = Depends(get_storage),
+                              rag: RagService = Depends(get_rag_service)):
+    return index_document(db, storage, ctx, document_id, rag)
+
+
+@router.get("/{document_id}/index-status", response_model=DocumentOut)
+def get_document_index_status(document_id: str, ctx: BusinessContext = Depends(_VIEW),
+                              db: Client = Depends(get_db)):
+    return document_index_status(db, ctx, document_id)
 
 
 @router.get("/{document_id}/download")
@@ -64,13 +95,15 @@ def download_document(document_id: str, ctx: BusinessContext = Depends(_VIEW),
 
 @router.delete("/{document_id}", status_code=204, response_class=Response)
 def delete_document(document_id: str, ctx: BusinessContext = Depends(_MANAGE),
-                    db: Client = Depends(get_db), storage: R2Storage = Depends(get_storage)):
-    document_service.delete_document(db, storage, ctx, document_id)
+                    db: Client = Depends(get_db), storage: R2Storage = Depends(get_storage),
+                    rag: RagService | None = Depends(get_optional_rag_service)):
+    document_service.delete_document(db, storage, ctx, document_id, rag)
     return Response(status_code=204)
 
 
 @router.post("/{document_id}/retry", response_model=DocumentOut)
 def retry_document(document_id: str, ctx: BusinessContext = Depends(_MANAGE),
-                   db: Client = Depends(get_db), storage: R2Storage = Depends(get_storage)):
+                   db: Client = Depends(get_db), storage: R2Storage = Depends(get_storage),
+                   rag: RagService | None = Depends(get_optional_rag_service)):
     """Re-run processing for a `failed` (or `uploaded`/stuck) document. 409 if already processed."""
-    return document_service.retry_document(db, storage, ctx, document_id)
+    return document_service.retry_document(db, storage, ctx, document_id, rag)

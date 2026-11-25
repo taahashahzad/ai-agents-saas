@@ -35,3 +35,17 @@ export async function updateEntry(businessId, entryId, changes) {
 export async function deleteEntry(businessId, entryId) {
   await api.delete(ENDPOINTS.knowledgeEntry(businessId, entryId)); // 204 No Content
 }
+
+export async function indexEntry(businessId, entryId) {
+  const { data } = await api.post(ENDPOINTS.indexKnowledgeEntry(businessId, entryId));
+  return data;
+}
+
+export async function queryKnowledge(businessId, question, { signal, topK } = {}) {
+  const { data } = await api.post(
+    ENDPOINTS.ragQuery(businessId),
+    { question, ...(topK ? { top_k: topK } : {}) },
+    { signal }
+  );
+  return data;
+}

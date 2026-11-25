@@ -2,7 +2,9 @@
 
 FastAPI + Firebase Admin SDK + Cloud Firestore. Backend only; the React frontend lives elsewhere.
 Phase 2 added memberships, invitations and RBAC. **Phase 3 adds the Business Knowledge Base**
-(document upload to **Cloudflare R2**, text extraction, structured knowledge entries). No embeddings/RAG yet (Phase 4).
+(document upload to **Cloudflare R2**, text extraction, structured knowledge entries). Phase 4 adds
+business-scoped OpenAI embeddings, Qdrant retrieval, indexing status/actions, and an authenticated RAG query.
+Phase 5 adds business-scoped agent configuration, a LangGraph runtime, and persistent playground conversations.
 
 ## Architecture
 
@@ -25,13 +27,18 @@ backend/
       auth.py                get_current_user, get_invitee, require_platform_admin
       business.py            get_business_membership, require_permission, require_business_role
       db.py  settings.py  storage.py
-    api/routes/              health, users, businesses, members, invitations, documents, knowledge
+    api/routes/              health, users, businesses, members, invitations, documents, knowledge, rag, agents, conversations
     services/                business, membership, invitation, user services plus:
                              document_service      upload/list/get/download/delete/retry
                              document_processing   pipeline: Storage -> text -> Storage -> status
                              text_extraction       PDF/DOCX/TXT/CSV -> clean text (pure functions)
                              file_validation       filename, MIME, size, real-content checks
                              knowledge_service     structured knowledge entries
+                             rag_service           chunking, OpenAI, tenant-filtered Qdrant search
+                             rag_indexing          document/entry indexing status and vector sync
+                             agent_service         business-scoped agent configuration and lifecycle
+                             agent_orchestrator    simple LangGraph validate/retrieve/answer flow
+                             conversation_service  bounded conversation history and message persistence
                              guards                archived-business check
     schemas/                 Pydantic models: user, business, member, invitation, document, knowledge
   scripts/
@@ -123,7 +130,7 @@ There is no Firebase Storage anywhere in this project.
 | Topic | Decision |
 |---|---|
 | Authorization | Reuses the Phase 2 dependencies: `require_permission(Permission.DOCUMENTS_VIEW / DOCUMENTS_MANAGE / KNOWLEDGE_VIEW / KNOWLEDGE_MANAGE)`. The new permissions live in the one matrix in `core/permissions.py`. |
-| Tenant isolation | Every Firestore path and object key is built from the membership-verified `business_id`. A document/entry ID from another business cannot resolve (404). Stored `business_id` and object keys are re-checked as defense in depth. |
+| Tenant isolation | Every Firestore path and object key is built from the membership-verified `business_id`. Every Qdrant query applies the same verified ID as a mandatory payload filter. A document/entry ID from another business cannot resolve (404). |
 | R2 access | `core/r2.py` builds one cached boto3 S3 client (endpoint `https://<ACCOUNT_ID>.r2.cloudflarestorage.com`, region `auto`, SigV4, retries + timeouts). `core/storage.py` (`R2Storage`) is the only code that calls it. Routes never touch boto3. |
 | Private bucket | Credentials exist only in server env vars. Files are never public and no object URL is ever returned or stored. |
 | Download | Streamed through FastAPI after the membership + role check (no presigned URLs). Presigned GET/PUT can be added later inside `R2Storage` without touching routes or services. |
@@ -152,6 +159,22 @@ Firestore: businesses/{business_id}/knowledge_entries/{entry_id}     (plain Fire
   If the Firestore write fails the original is deleted again; if extraction fails the status becomes `failed`.
 - Delete order: hide in Firestore -> delete both R2 objects -> clear the paths (repeatable if R2 fails halfway).
 - Extracted text is never stored in Firestore (document size limit).
+
+### Phase 4 retrieval and indexing
+
+- Extracted document text stays in private R2; structured knowledge stays in Firestore. Chunk text and
+  embeddings are stored in the shared Qdrant collection with business/source metadata.
+- Upload and successful extraction automatically index when OpenAI and Qdrant are configured.
+  Structured knowledge create/edit synchronizes its vectors. The document and entry APIs expose
+  independent indexing state; managers can retry/reindex explicitly.
+- Deletion removes the corresponding vectors before deleting the source record. Reindexing replaces
+  the source's old points so an unsuccessful reindex does not leave outdated vectors available.
+- The RAG query requires the business knowledge-view permission and filters Qdrant results by the
+  verified business ID before sending source excerpts to the answer model. Source passages are
+  explicitly treated as untrusted data.
+- Configure `OPENAI_API_KEY` and `QDRANT_URL` to enable RAG. Without them, the existing knowledge
+  base still works; vector indexing/query routes report that RAG is not configured.
+- Full API contract and setup details: [`docs/FRONTEND_API_CONTRACT.md`](./docs/FRONTEND_API_CONTRACT.md).
 
 ### Cloudflare R2 setup
 
@@ -216,8 +239,16 @@ businesses/{business_id}/documents/{document_id}
     extracted_text_path, extracted_character_count, is_deleted (+ deleted_at, deleted_by)
 businesses/{business_id}/knowledge_entries/{entry_id}
     entry_id, business_id, title, category, content, created_by, created_at, updated_at
+businesses/{business_id}/agents/{agent_id}
+    agent_id, business_id, name, instructions, personality, greeting, language, model, status, ...
+businesses/{business_id}/conversations/{conversation_id}
+    conversation_id, business_id, agent_id, status, created_at, updated_at, last_message_preview
+businesses/{business_id}/conversations/{conversation_id}/messages/{message_id}
+    message_id, conversation_id, role, content, sources, created_at
 ```
 Collections are created automatically on first write. `firestore.rules` stays deny-all (the backend uses the Admin SDK).
+Agent and conversation records are business-scoped. Conversation history is bounded when sent to the model;
+only the fixed, permission-checked business-knowledge search tool is available to agents.
 
 ### Required Firestore indexes
 
@@ -230,7 +261,8 @@ Both are in `firestore.indexes.json`: `firebase deploy --only firestore:indexes`
 
 ### New dependencies and environment variables
 
-`pip install -r requirements.txt` (adds `python-multipart`, `pypdf`, `python-docx`, `boto3`).
+`pip install -r requirements.txt` (adds `python-multipart`, `pypdf`, `python-docx`, `boto3`,
+`openai`, `qdrant-client`, `langchain-text-splitters`, and `langgraph`).
 
 | Variable | Default | Purpose |
 |---|---|---|
@@ -240,6 +272,14 @@ Both are in `firestore.indexes.json`: `firebase deploy --only firestore:indexes`
 | `R2_ENDPOINT_URL` | derived | Must start with `https://` (the app refuses to start otherwise) |
 | `R2_REGION` | `auto` | Always `auto` for R2 |
 | `MAX_UPLOAD_MB` | `10` | Max upload size, clamped to 1-50 MB |
+| `OPENAI_API_KEY` | (none) | Backend-only; enables RAG embeddings and answers |
+| `OPENAI_EMBEDDING_MODEL` | `text-embedding-3-small` | `text-embedding-3-small` or `text-embedding-3-large`, 1536 dimensions |
+| `OPENAI_CHAT_MODEL` | `gpt-4o-mini` | RAG answer generation model |
+| `QDRANT_URL` | (none) | Backend-only Qdrant endpoint; enables RAG |
+| `QDRANT_API_KEY` | (none) | Optional local, recommended for hosted Qdrant |
+| `QDRANT_COLLECTION` | `business_knowledge` | Shared vector collection |
+| `RAG_CHUNK_SIZE` / `RAG_CHUNK_OVERLAP` | `1000` / `150` | Text chunking parameters |
+| `RAG_TOP_K` / `RAG_MIN_SCORE` | `5` / `0.2` | Retrieval count (1-20) and similarity cutoff |
 
 ### API summary
 
@@ -253,20 +293,37 @@ Full request/response details and examples: **`docs/FRONTEND_API_CONTRACT.md`**.
 | GET | `/businesses/{id}/documents/{document_id}/download` | 200 file bytes | owner, admin, member |
 | DELETE | `/businesses/{id}/documents/{document_id}` | 204 | owner, admin |
 | POST | `/businesses/{id}/documents/{document_id}/retry` | 200 Document | owner, admin |
+| POST | `/businesses/{id}/documents/{document_id}/index` | 200 Document | owner, admin |
+| POST | `/businesses/{id}/documents/{document_id}/reindex` | 200 Document | owner, admin |
+| GET | `/businesses/{id}/documents/{document_id}/index-status` | 200 Document | owner, admin, member |
 | GET | `/businesses/{id}/knowledge` | 200 `{items, next_cursor}` | owner, admin, member |
 | POST | `/businesses/{id}/knowledge` | 201 Entry | owner, admin |
 | PATCH | `/businesses/{id}/knowledge/{entry_id}` | 200 Entry | owner, admin |
+| POST | `/businesses/{id}/knowledge/{entry_id}/index` | 200 Entry | owner, admin |
 | DELETE | `/businesses/{id}/knowledge/{entry_id}` | 204 | owner, admin |
+| POST | `/businesses/{id}/rag/query` | 200 Answer and sources | owner, admin, member |
+| POST | `/businesses/{id}/agents` | 201 Agent | owner, admin |
+| GET | `/businesses/{id}/agents` | 200 Agent[] | owner, admin |
+| GET | `/businesses/{id}/agents/{agent_id}` | 200 Agent | owner, admin |
+| PATCH | `/businesses/{id}/agents/{agent_id}` | 200 Agent | owner, admin |
+| PATCH | `/businesses/{id}/agents/{agent_id}/status` | 200 Agent | owner, admin |
+| DELETE | `/businesses/{id}/agents/{agent_id}` | 204, deletes attached conversations/messages | owner, admin |
+| POST | `/businesses/{id}/agents/{agent_id}/chat` | 200 Chat turn and sources | owner, admin |
+| GET | `/businesses/{id}/agents/{agent_id}/conversations` | 200 Conversation[] | owner, admin |
+| GET | `/businesses/{id}/conversations/{conversation_id}` | 200 Conversation and messages | owner, admin |
+| DELETE | `/businesses/{id}/conversations/{conversation_id}` | 204 | owner, admin |
 
-### Phase 3 errors
+### Phase 3/4 errors
 
 413 `file_too_large`, 415 `unsupported_file_type`, 422 `invalid_file` / `invalid_cursor`, 404 `document_not_found` /
 `file_not_found` / `entry_not_found`, 409 `already_processed` / `already_processing`, 502 `storage_error`,
-503 `storage_not_configured`.
+503 `storage_not_configured` / `rag_not_configured` / `rag_unavailable`.
 
 ### Tests
 
-`tests/test_documents.py`, `tests/test_knowledge.py`, `tests/test_storage_wrapper.py` (plus the updated permission matrix).
+The pytest suite is in `tests/`; RAG-specific unit and authorization coverage is in
+`tests/test_rag_service.py` and `tests/test_rag_api.py`. Provider calls are mocked; tests do not contact
+OpenAI or Qdrant.
 Extraction tests use real PDF/DOCX bytes. The R2 layer is tested with real boto3 clients whose HTTP layer is stubbed
 (`botocore.stub`): exact S3 calls, error mapping, no secrets in logs, and the real signed request (path-style URL,
 region `auto`, no checksum headers). API tests use an in-memory storage fake, plus one end-to-end test through the real
@@ -278,6 +335,13 @@ region `auto`, no checksum headers). API tests use an in-memory storage fake, pl
 - Scanned/image-only PDFs are not supported (no OCR) and are marked `failed` with an explanatory message.
 - Legacy `.doc`/`.xls` and other formats are unsupported. Password-protected PDFs are marked `failed`.
 - The Content-Length guard cannot see chunked uploads without that header; also limit request size at your proxy.
+
+### RAG evaluation
+
+`evaluation/restaurant_rag.json` contains a fictional five-source restaurant corpus and 20 questions.
+With backend RAG settings configured, run `python scripts/evaluate_rag.py` from `backend/` to report
+retrieval recall at configured top-k and the rate of answers containing all required reference terms.
+The evaluation uses a unique synthetic business ID and removes its vectors when complete.
 - Uploads/downloads pass through the API and are buffered in memory (fine at the size limit). Direct browser-to-R2
   presigned uploads are a possible later optimisation.
 - No per-business document count/storage quota yet.

@@ -1,4 +1,5 @@
 from datetime import datetime
+from enum import Enum
 from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, StringConstraints, model_validator
@@ -7,6 +8,13 @@ Title = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, ma
 # Categories are free-form labels ("menu", "faq", "policies"...). Lowercased so filtering is stable.
 Category = Annotated[str, StringConstraints(strip_whitespace=True, to_lower=True, min_length=1, max_length=60)]
 Content = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=20000)]
+
+
+class KnowledgeIndexingStatus(str, Enum):
+    pending = "pending"
+    processing = "processing"
+    indexed = "indexed"
+    failed = "failed"
 
 
 class KnowledgeCreate(BaseModel):
@@ -42,6 +50,11 @@ class KnowledgeOut(BaseModel):
     created_by: str
     created_at: datetime
     updated_at: datetime
+    indexing_status: KnowledgeIndexingStatus = KnowledgeIndexingStatus.pending
+    indexed_chunk_count: int = 0
+    indexed_at: datetime | None = None
+    indexing_error: str | None = None
+    embedding_model: str | None = None
 
 
 class KnowledgeListOut(BaseModel):

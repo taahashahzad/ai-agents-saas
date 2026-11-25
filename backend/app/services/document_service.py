@@ -13,7 +13,13 @@ from google.cloud import firestore
 from google.cloud.firestore import Client
 from google.cloud.firestore_v1.base_query import FieldFilter
 
-from app.core.errors import BadGatewayError, ConflictError, NotFoundError, UnprocessableEntityError
+from app.core.errors import (
+    BadGatewayError,
+    ConflictError,
+    NotFoundError,
+    ServiceUnavailableError,
+    UnprocessableEntityError,
+)
 from app.core.storage import StorageError, StorageObjectNotFound
 from app.schemas.document import DocumentListOut, DocumentOut, DocumentStatus, DocumentType
 from app.services import document_processing, file_validation
@@ -89,6 +95,11 @@ def upload_document(db: Client, storage, ctx: BusinessContext, *, filename: str 
         "processing_error": None,
         "extracted_text_path": None,
         "extracted_character_count": None,
+        "indexing_status": "pending",
+        "indexed_chunk_count": 0,
+        "indexed_at": None,
+        "indexing_error": None,
+        "embedding_model": None,
         "is_deleted": False,
     }
     try:
@@ -150,7 +161,7 @@ def _best_effort_delete(storage, path: str) -> None:
         pass
 
 
-def delete_document(db: Client, storage, ctx: BusinessContext, document_id: str) -> None:
+def delete_document(db: Client, storage, ctx: BusinessContext, document_id: str, rag=None) -> None:
     """1) hide the document (is_deleted=true)  2) delete both Storage objects  3) clear the paths.
     Step 1 happens first, so access stops immediately. If step 2 fails the call returns 502 and
     the SAME request can simply be repeated to finish the cleanup."""
@@ -166,6 +177,9 @@ def delete_document(db: Client, storage, ctx: BusinessContext, document_id: str)
     cleanup_pending = bool(data.get("storage_path") or data.get("extracted_text_path"))
     if data.get("is_deleted") and not cleanup_pending:
         raise NotFoundError("Document not found.", code="document_not_found")
+
+    from app.services.rag_indexing import delete_document_vectors
+    delete_document_vectors(rag, ctx.business_id, document_id)
 
     if not data.get("is_deleted"):
         ref.update({"is_deleted": True, "deleted_at": _now(), "deleted_by": ctx.user.uid,
@@ -185,8 +199,25 @@ def delete_document(db: Client, storage, ctx: BusinessContext, document_id: str)
 
 # ------------------------------------------------------------------ retry
 
-def retry_document(db: Client, storage, ctx: BusinessContext, document_id: str) -> DocumentOut:
+def retry_document(db: Client, storage, ctx: BusinessContext, document_id: str, rag=None) -> DocumentOut:
     require_active_business(ctx)
     ref, _ = _load(db, ctx, document_id)
+    if rag is not None:
+        from app.services.rag_indexing import delete_document_vectors
+        delete_document_vectors(rag, ctx.business_id, document_id)
+        ref.update({
+            "indexing_status": "pending",
+            "indexed_chunk_count": 0,
+            "indexed_at": None,
+            "indexing_error": None,
+            "embedding_model": None,
+        })
     document_processing.process_document(db, storage, ctx.business_id, document_id)
-    return _out(ref.get().to_dict())
+    updated = _out(ref.get().to_dict())
+    if rag is not None and updated.status == DocumentStatus.processed:
+        from app.services.rag_indexing import index_document
+        try:
+            return index_document(db, storage, ctx, document_id, rag)
+        except ServiceUnavailableError:
+            return _out(ref.get().to_dict())
+    return updated

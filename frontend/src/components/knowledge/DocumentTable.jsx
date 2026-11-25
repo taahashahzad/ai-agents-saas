@@ -19,6 +19,7 @@ export default function DocumentTable({
   onView,
   onDownload,
   onRetry,
+  onIndex,
   onDelete,
 }) {
   return (
@@ -67,6 +68,17 @@ export default function DocumentTable({
                             {doc.processing_error}
                           </p>
                         )}
+                        {doc.status === 'processed' && (
+                          <p
+                            className={`mt-0.5 text-xs ${
+                              doc.indexing_status === 'failed' ? 'text-red-600' : 'text-slate-500'
+                            }`}
+                            title={doc.indexing_error || undefined}
+                          >
+                            Index: {doc.indexing_status || 'pending'}
+                            {doc.indexed_chunk_count > 0 ? ` · ${doc.indexed_chunk_count} chunks` : ''}
+                          </p>
+                        )}
                       </div>
                     </div>
                   </td>
@@ -83,7 +95,11 @@ export default function DocumentTable({
                     {isBusy ? (
                       <span className="inline-flex items-center gap-2 text-xs text-slate-500">
                         <span className="h-4 w-4 animate-spin rounded-full border-2 border-slate-200 border-t-indigo-600" />
-                        {busy.kind === 'download' ? 'Downloading' : 'Retrying'}
+                        {busy.kind === 'download'
+                          ? 'Downloading'
+                          : busy.kind === 'index'
+                            ? 'Indexing'
+                            : 'Retrying'}
                       </span>
                     ) : (
                       <ActionMenu
@@ -96,6 +112,11 @@ export default function DocumentTable({
                             label: 'Retry processing',
                             onClick: () => onRetry(doc),
                             hidden: !(canWrite && doc.status === 'failed'),
+                          },
+                          {
+                            label: doc.indexing_status === 'indexed' ? 'Reindex document' : 'Index document',
+                            onClick: () => onIndex(doc),
+                            hidden: !(canWrite && doc.status === 'processed'),
                           },
                           { label: 'Delete', onClick: () => onDelete(doc), danger: true, hidden: !canWrite },
                         ]}

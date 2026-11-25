@@ -37,9 +37,29 @@ export const ENDPOINTS = {
     `${API_PREFIX}/businesses/${enc(businessId)}/documents/${enc(documentId)}/download`, // GET (binary)
   retryDocument: (businessId, documentId) =>
     `${API_PREFIX}/businesses/${enc(businessId)}/documents/${enc(documentId)}/retry`, // POST
+  indexDocument: (businessId, documentId) =>
+    `${API_PREFIX}/businesses/${enc(businessId)}/documents/${enc(documentId)}/index`, // POST
+  reindexDocument: (businessId, documentId) =>
+    `${API_PREFIX}/businesses/${enc(businessId)}/documents/${enc(documentId)}/reindex`, // POST
+  documentIndexStatus: (businessId, documentId) =>
+    `${API_PREFIX}/businesses/${enc(businessId)}/documents/${enc(documentId)}/index-status`, // GET
   knowledge: (businessId) => `${API_PREFIX}/businesses/${enc(businessId)}/knowledge`, // GET, POST
   knowledgeEntry: (businessId, entryId) =>
     `${API_PREFIX}/businesses/${enc(businessId)}/knowledge/${enc(entryId)}`, // PATCH, DELETE
+  indexKnowledgeEntry: (businessId, entryId) =>
+    `${API_PREFIX}/businesses/${enc(businessId)}/knowledge/${enc(entryId)}/index`, // POST
+  ragQuery: (businessId) => `${API_PREFIX}/businesses/${enc(businessId)}/rag/query`, // POST
+  agents: (businessId) => `${API_PREFIX}/businesses/${enc(businessId)}/agents`, // GET, POST
+  agent: (businessId, agentId) =>
+    `${API_PREFIX}/businesses/${enc(businessId)}/agents/${enc(agentId)}`, // GET, PATCH, DELETE
+  agentStatus: (businessId, agentId) =>
+    `${API_PREFIX}/businesses/${enc(businessId)}/agents/${enc(agentId)}/status`, // PATCH
+  agentChat: (businessId, agentId) =>
+    `${API_PREFIX}/businesses/${enc(businessId)}/agents/${enc(agentId)}/chat`, // POST
+  agentConversations: (businessId, agentId) =>
+    `${API_PREFIX}/businesses/${enc(businessId)}/agents/${enc(agentId)}/conversations`, // GET
+  conversation: (businessId, conversationId) =>
+    `${API_PREFIX}/businesses/${enc(businessId)}/conversations/${enc(conversationId)}`, // GET, DELETE
 
   // Invitations addressed to the signed-in user
   myInvitations: `${API_PREFIX}/invitations`, // GET

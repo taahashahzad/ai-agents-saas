@@ -3,7 +3,7 @@ import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routes import businesses, documents, health, invitations, knowledge, members, users
+from app.api.routes import agents, businesses, conversations, documents, health, invitations, knowledge, members, rag, users
 from app.core.config import Settings, get_settings
 from app.core.errors import register_exception_handlers
 from app.core.limits import UploadSizeLimitMiddleware
@@ -50,6 +50,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(invitations.router, prefix="/api/v1")
     app.include_router(documents.router, prefix="/api/v1")
     app.include_router(knowledge.router, prefix="/api/v1")
+    app.include_router(rag.router, prefix="/api/v1")
+    app.include_router(agents.router, prefix="/api/v1")
+    app.include_router(conversations.router, prefix="/api/v1")
     return app
 
 

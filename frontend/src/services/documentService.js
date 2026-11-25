@@ -93,3 +93,8 @@ export async function retryDocument(businessId, documentId) {
   const { data } = await api.post(ENDPOINTS.retryDocument(businessId, documentId));
   return data;
 }
+
+export async function indexDocument(businessId, documentId) {
+  const { data } = await api.post(ENDPOINTS.indexDocument(businessId, documentId));
+  return data;
+}

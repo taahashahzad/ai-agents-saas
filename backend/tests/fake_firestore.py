@@ -62,20 +62,46 @@ class FakeDocumentReference:
 
 
 class FakeQuery:
-    def __init__(self, db, matcher, filters=()):
+    def __init__(self, db, matcher, filters=(), orders=(), limit_count=None):
         self._db, self._matcher, self._filters = db, matcher, filters
+        self._orders, self._limit_count = orders, limit_count
 
     def where(self, *args, filter=None, **kwargs):
         assert filter is not None, "fake supports where(filter=FieldFilter(...)) only"
-        return FakeQuery(self._db, self._matcher, self._filters + (filter,))
+        return FakeQuery(
+            self._db, self._matcher, self._filters + (filter,), self._orders, self._limit_count
+        )
+
+    def order_by(self, field_path, direction=None):
+        return FakeQuery(
+            self._db,
+            self._matcher,
+            self._filters,
+            self._orders + ((field_path, direction),),
+            self._limit_count,
+        )
+
+    def limit(self, count):
+        return FakeQuery(self._db, self._matcher, self._filters, self._orders, count)
 
     def get(self, transaction=None):
         return list(self.stream())
 
     def stream(self, transaction=None):
-        for path, data in list(self._db.docs.items()):
-            if self._matcher(path) and all(self._ok(f, data) for f in self._filters):
-                yield FakeSnapshot(FakeDocumentReference(self._db, path), data)
+        matches = [
+            (path, data)
+            for path, data in list(self._db.docs.items())
+            if self._matcher(path) and all(self._ok(f, data) for f in self._filters)
+        ]
+        for field_path, direction in reversed(self._orders):
+            matches.sort(
+                key=lambda item: item[1].get(field_path),
+                reverse=str(direction).upper().endswith("DESCENDING"),
+            )
+        if self._limit_count is not None:
+            matches = matches[:self._limit_count]
+        for path, data in matches:
+            yield FakeSnapshot(FakeDocumentReference(self._db, path), data)
 
     @staticmethod
     def _ok(f, data):
@@ -111,11 +137,17 @@ class FakeBatch:
     def update(self, ref, data):
         self._ops.append(("update", ref.path, data))
 
+    def delete(self, ref):
+        self._ops.append(("delete", ref.path, None))
+
     def commit(self):
         snapshot = copy.deepcopy(self._db.docs)
         try:
             for op, path, data in self._ops:
-                getattr(self._db, f"_{op}")(path, data)
+                if op == "delete":
+                    self._db.docs.pop(path, None)
+                else:
+                    getattr(self._db, f"_{op}")(path, data)
         except Exception:
             self._db.docs = snapshot  # all-or-nothing
             raise

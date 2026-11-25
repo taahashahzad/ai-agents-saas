@@ -45,6 +45,16 @@ class Settings:
     r2_bucket_name: str | None = None
     r2_endpoint_url: str | None = None
     r2_region: str = "auto"
+    openai_api_key: str | None = field(default=None, repr=False)
+    openai_embedding_model: str = "text-embedding-3-small"
+    openai_chat_model: str = "gpt-4o-mini"
+    qdrant_url: str | None = None
+    qdrant_api_key: str | None = field(default=None, repr=False)
+    qdrant_collection: str = "business_knowledge"
+    rag_chunk_size: int = 1000
+    rag_chunk_overlap: int = 150
+    rag_top_k: int = 5
+    rag_min_score: float = 0.2
 
     @property
     def is_production(self) -> bool:
@@ -54,6 +64,10 @@ class Settings:
     def r2_configured(self) -> bool:
         return all((self.r2_access_key_id, self.r2_secret_access_key, self.r2_bucket_name,
                     self.r2_endpoint_url))
+
+    @property
+    def rag_configured(self) -> bool:
+        return bool(self.openai_api_key and self.qdrant_url)
 
 
 @lru_cache
@@ -69,6 +83,22 @@ def get_settings() -> Settings:
                            "(e.g. https://<ACCOUNT_ID>.r2.cloudflarestorage.com).")
     if endpoint:
         endpoint = endpoint.rstrip("/")
+    qdrant_url = _env("QDRANT_URL")
+    if qdrant_url and not qdrant_url.startswith(("https://", "http://")):
+        raise RuntimeError("QDRANT_URL must start with https:// or http://.")
+    embedding_model = _env("OPENAI_EMBEDDING_MODEL") or "text-embedding-3-small"
+    if embedding_model not in {"text-embedding-3-small", "text-embedding-3-large"}:
+        raise RuntimeError("OPENAI_EMBEDDING_MODEL must be text-embedding-3-small or text-embedding-3-large.")
+    chunk_size = int(os.getenv("RAG_CHUNK_SIZE", "1000"))
+    chunk_overlap = int(os.getenv("RAG_CHUNK_OVERLAP", "150"))
+    if chunk_size < 1 or chunk_overlap < 0 or chunk_overlap >= chunk_size:
+        raise RuntimeError("RAG_CHUNK_SIZE must be positive and RAG_CHUNK_OVERLAP must be smaller.")
+    top_k = int(os.getenv("RAG_TOP_K", "5"))
+    if not 1 <= top_k <= 20:
+        raise RuntimeError("RAG_TOP_K must be between 1 and 20.")
+    min_score = float(os.getenv("RAG_MIN_SCORE", "0.2"))
+    if not 0 <= min_score <= 1:
+        raise RuntimeError("RAG_MIN_SCORE must be between 0 and 1.")
     return Settings(
         app_env=os.getenv("APP_ENV", "development"),
         cors_origins=origins,
@@ -86,4 +116,14 @@ def get_settings() -> Settings:
         r2_bucket_name=_env("R2_BUCKET_NAME"),
         r2_endpoint_url=endpoint,
         r2_region=_env("R2_REGION") or "auto",
+        openai_api_key=_env("OPENAI_API_KEY"),
+        openai_embedding_model=embedding_model,
+        openai_chat_model=_env("OPENAI_CHAT_MODEL") or "gpt-4o-mini",
+        qdrant_url=qdrant_url,
+        qdrant_api_key=_env("QDRANT_API_KEY"),
+        qdrant_collection=_env("QDRANT_COLLECTION") or "business_knowledge",
+        rag_chunk_size=chunk_size,
+        rag_chunk_overlap=chunk_overlap,
+        rag_top_k=top_k,
+        rag_min_score=min_score,
     )

@@ -59,6 +59,17 @@ export default function DocumentDetailsModal({ businessId, doc, currentUid, onCl
               : '—'}
           </Row>
         )}
+        {current.status === 'processed' && (
+          <>
+            <Row label="Indexing status">{current.indexing_status || 'pending'}</Row>
+            <Row label="Indexed chunks">{current.indexed_chunk_count ?? 0}</Row>
+            {current.indexing_error && (
+              <Row label="Indexing error">
+                <span className="text-red-600">{current.indexing_error}</span>
+              </Row>
+            )}
+          </>
+        )}
         <Row label="Uploaded by">
           {current.uploaded_by ? (current.uploaded_by === currentUid ? 'You' : 'Team member') : '—'}
         </Row>
